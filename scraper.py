@@ -11,7 +11,9 @@ import json
 import time
 from bs4 import BeautifulSoup
 from requests import Session
+import requests
 
+NWORKERS = 30
 save_to_filename = 'data/just_links.sdat'
 ajax_request_filename = 'data/xmlhhttprequest'
 website = 'http://www.notaires.fr'
@@ -40,6 +42,10 @@ def getPayload(page_number):
     payload = payload_part1+str(page_number)+payload_part2
     return payload
 
+def getProfile(url):
+    r  = requests.get(url)
+    return r.text
+
 def getPage(payload, s):
     r  = s.post(ajax_url, data=payload, headers=hdrs)
     if r.status_code != 200:
@@ -48,9 +54,8 @@ def getPage(payload, s):
         return r.status_code
     return r.json()[1]['data']
 
-def makeRequests(pages):
+def makeRequests(pages, executor):
     s = Session()
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=20)
     future_to_page = {executor.submit(getPage, getPayload(page_number), s):
                       page_number for page_number in range(1,977)}
     for future in concurrent.futures.as_completed(future_to_page):
@@ -64,25 +69,45 @@ def makeRequests(pages):
         else:
             print('Got page %i' % page)
 
-def getProfileLinks():
+def getProfileLinks(executor):
     pages = io.StringIO()
     page_number = 1
     save_file = open(save_to_filename,'a')
     exp = re.compile('<a class="btn btn-actions mq-hos" href="?\'?([^"\'>]*)')
-    makeRequests(pages)
+    makeRequests(pages, executor)
     links = exp.findall(pages.getvalue())
     pages.close()
     save_file.write('\n'.join(links)+'\n')
     save_file.close()
     return links
 
+def saveData(data):
+    soup = BeautifulSoup(data, 'lxml')
+    divs = soup.find_all('div', class_='body-fiche-tab')
+    for div in divs:
+        print(div)
+    
+def getData(links, executor):
+    future_to_page = {executor.submit(getProfile, website+uri): uri for uri in links}
+    for future in concurrent.futures.as_completed(future_to_page):
+        link = future_to_page[future]
+        try:
+            data = future.result()
+            saveData(data)
+        except Exception as exc:
+            print('Generated an exception: %s' % (exc))
+            return
+        else:
+            print('Got link %s' % link)
+
 def main():
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=NWORKERS)
     if os.path.isfile(save_to_filename):
         f = open(save_to_filename,'r')
         links = [line.strip('\n') for line in f.readlines()]
     else:
-        links = getProfileLinks()
-    print(links)
+        links = getProfileLinks(executor)
+    getData(links, executor)
 
 if __name__ == "__main__":
     main()
