@@ -3,6 +3,7 @@
 #         Script to get info from website http://www.notaires.fr
 #
 
+import os.path
 import concurrent.futures
 import io
 import re
@@ -11,6 +12,8 @@ import time
 from bs4 import BeautifulSoup
 from requests import Session
 
+save_to_filename = 'data/just_links.sdat'
+ajax_request_filename = 'data/xmlhhttprequest'
 website = 'http://www.notaires.fr'
 ajax_url = website + '/fr/views/ajax?type=&\
 field_office_department_value=&\
@@ -19,10 +22,6 @@ field_jv_adresses_line_6city_value=&\
 field_jv_adresses_line_6cp_value=&\
 departement1=&\
 field_notary_langueparlee_taxo_tid=All'
-save_file = open("data/just_links",'w+')
-ajaxfile = open('data/xmlhhttprequest', 'r')
-payload_part1 = ajaxfile.readline().rstrip('\n')
-payload_part2 = ajaxfile.readline().rstrip('\n')
 hdrs = {
     # 'Host': 'www.notaires.fr',
     'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:39.0) Gecko/20100101 Firefox/39.0',
@@ -33,7 +32,10 @@ hdrs = {
     'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
     'X-Requested-With': 'XMLHttpRequest',
 }
-
+ajaxfile = open(ajax_request_filename, 'r')
+payload_part1 = ajaxfile.readline().rstrip('\n')
+payload_part2 = ajaxfile.readline().rstrip('\n')
+    
 def getPayload(page_number):
     payload = payload_part1+str(page_number)+payload_part2
     return payload
@@ -65,6 +67,7 @@ def makeRequests(pages):
 def getProfileLinks():
     pages = io.StringIO()
     page_number = 1
+    save_file = open(save_to_filename,'a')
     exp = re.compile('<a class="btn btn-actions mq-hos" href="?\'?([^"\'>]*)')
     makeRequests(pages)
     links = exp.findall(pages.getvalue())
@@ -74,11 +77,12 @@ def getProfileLinks():
     return links
 
 def main():
-    links = getProfileLinks()
-    #f = open('data/just_links','r')
-    #links = [line.strip('\n') for line in f.readlines()]
+    if os.path.isfile(save_to_filename):
+        f = open(save_to_filename,'r')
+        links = [line.strip('\n') for line in f.readlines()]
+    else:
+        links = getProfileLinks()
     print(links)
 
-    
 if __name__ == "__main__":
     main()
