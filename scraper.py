@@ -3,6 +3,8 @@
 #         Script to get info from website http://www.notaires.fr
 #
 
+import sys
+import sqlite3
 import os.path
 import concurrent.futures
 import io
@@ -13,7 +15,7 @@ from bs4 import BeautifulSoup
 from requests import Session
 import requests
 
-NWORKERS = 30
+NWORKERS = 60
 save_to_filename = 'data/just_links.sdat'
 ajax_request_filename = 'data/xmlhhttprequest'
 website = 'http://www.notaires.fr'
@@ -81,25 +83,54 @@ def getProfileLinks(executor):
     save_file.close()
     return links
 
-def saveData(data):
+def saveData(data, db, link):
     soup = BeautifulSoup(data, 'lxml')
     divs = soup.find_all('div', class_='body-fiche-tab')
-    for div in divs:
-        print(div)
-    
+    notaire = divs[0].find_all('p')
+    name = str(divs[0].h1.string)
+    address = ' '.join(notaire[0].stripped_strings)
+    g = [n for n in notaire[1].stripped_strings]
+    if len(g) > 0:
+        tel = g[0]
+        if len(g) > 1:
+            fax = g[1]
+        else:
+            fax = 'N/A' 
+    else:
+        tel = 'N/A'
+        fax = 'N/A' 
+    mail = ''.join([d for d in notaire[2].stripped_strings if d != 'Courriel :'])
+    #buro = divs[1].find_all('p')
+    try:
+        societe  = next(divs[1].h2.stripped_strings)
+        coworkers = str([next(div.stripped_strings) for div in divs[1](itemprop="member")])
+        cp = str([next(div.stripped_strings) for div in divs[1](itemprop="postalCode")])
+        ex =  re.compile('.*@.*')
+        sm =  str(ex.findall(divs[1].get_text())).split(' : ')[-1]
+        db.execute("INSERT INTO notaires (Name,Address,Cp,Tel,Fax,Mail,Societe,Coworkers,Link,Html) VALUES (?,?,?,?,?,?,?,?,?,?);", (name, address, cp, tel, fax, mail, societe, coworkers, link,str(divs)))
+        db.execute('''INSERT INTO societes(Name,Address,Cp,Mail,Employees,Link) 
+    SELECT ?,?,?,?,?,?
+    WHERE NOT EXISTS(SELECT 1 FROM societes WHERE Name == ?);''',(societe, address, cp, sm, coworkers, link, societe))
+    except StopIteration as exc:
+        print(exc)
+    return
+
 def getData(links, executor):
+    n = 0
+    dbconn = sqlite3.connect('data/notaires.db')
+    c = dbconn.cursor()
+    c.execute('CREATE TABLE IF NOT EXISTS notaires(Name TEXT NOT NULL, Address TEXT, Cp TEXT, Tel TEXT, Fax TEXT, Mail TEXT, Societe TEXT, Coworkers TEXT, Link TEXT, Html TEXT);')
+    c.execute('CREATE TABLE IF NOT EXISTS societes(Name TEXT NOT NULL, Address TEXT,Cp TEXT, Mail TEXT, Employees TEXT, Link TEXT, Html TEXT);')
     future_to_page = {executor.submit(getProfile, website+uri): uri for uri in links}
     for future in concurrent.futures.as_completed(future_to_page):
         link = future_to_page[future]
-        try:
-            data = future.result()
-            saveData(data)
-        except Exception as exc:
-            print('Generated an exception: %s' % (exc))
-            return
-        else:
-            print('Got link %s' % link)
-
+        n += 1
+        data = future.result()
+        saveData(data, dbconn, link)
+        print('Got link number %i at %s' % (n,link))
+    dbconn.commit()
+    dbconn.close()
+    
 def main():
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=NWORKERS)
     if os.path.isfile(save_to_filename):
